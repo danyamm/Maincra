@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MineWeb - Minecraft 3D en el Navegador</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            overflow: hidden;
+            background: #000;
+            font-family: 'Press Start 2P', system-ui;
+            color: white;
+            user-select: none;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            border: 2px solid rgba(255,255,255,0.8);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        
+        #hotbar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            background: rgba(0,0,0,0.5);
+            padding: 8px;
+            border: 3px solid #555;
+            border-image: linear-gradient(#aaa, #666) 1;
+            pointer-events: all;
+        }
+        
+        .slot {
+            width: 64px;
+            height: 64px;
+            background: rgba(139, 69, 19, 0.8);
+            border: 3px solid #aaa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            cursor: pointer;
+        }
+        
+        .slot.selected {
+            border-color: #fff;
+            box-shadow: 0 0 0 4px rgba(255,255,255,0.5);
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border: 3px solid #aaa;
+            max-width: 300px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        
+        #block-preview {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 80px;
+            height: 80px;
+            background: rgba(0,0,0,0.5);
+            border: 3px solid #aaa;
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        #menu {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            padding: 40px;
+            border: 6px solid #555;
+            text-align: center;
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 100;
+            pointer-events: all;
+        }
+        
+        button {
+            font-family: 'Press Start 2P', system-ui;
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #3a3;
+            color: white;
+            border: 4px solid #0f0;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background: #4f4;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game"></canvas>
+    
+    <div id="ui">
+        <!-- Mirilla -->
+        <div id="crosshair"></div>
+        
+        <!-- Instrucciones -->
+        <div id="instructions">
+            <strong>MINECRAFT WEB</strong><br><br>
+            WASD - Mover<br>
+            Ratón - Mirar<br>
+            Click Izq - Romper bloque<br>
+            Click Der - Colocar bloque<br>
+            Espacio - Saltar<br>
+            1-9 - Cambiar bloque<br>
+            ESC - Menú
+        </div>
+        
+        <!-- Hotbar -->
+        <div id="hotbar"></div>
+        
+        <!-- Vista previa del bloque -->
+        <div id="block-preview"></div>
+    </div>
+    
+    <!-- Menú de pausa -->
+    <div id="menu">
+        <h1 style="color:#0f0; margin-bottom:20px;">PAUSA</h1>
+        <button onclick="togglePause()">Continuar</button>
+        <button onclick="saveWorld()">Guardar Mundo</button>
+        <button onclick="loadWorld()">Cargar Mundo</button>
+        <button onclick="window.location.reload()">Nuevo Mundo</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.134.0/examples/js/controls/PointerLockControls.min.js"></script>
+    
+    <script>
+        // ==================== CONFIGURACIÓN ====================
+        const BLOCK_TYPES = {
+            1: { name: "Grass", color: 0x5cb85c, emoji: "🌿" },
+            2: { name: "Dirt", color: 0x8B4513, emoji: "🟫" },
+            3: { name: "Stone", color: 0x888888, emoji: "🪨" },
+            4: { name: "Wood", color: 0xD2B48C, emoji: "🪵" },
+            5: { name: "Leaves", color: 0x228B22, emoji: "🍃" },
+            6: { name: "Sand", color: 0xF4A460, emoji: "🏜️" },
+            7: { name: "Water", color: 0x4682B4, emoji: "💧", transparent: true, opacity: 0.6 }
+        };
+        
+        let currentBlockType = 1;
+        
+        // ==================== VARIABLES GLOBALES ====================
+        let scene, camera, renderer, controls;
+        let world = {};
+        const CHUNK_SIZE = 16;
+        const WORLD_HEIGHT = 32;
+        let playerVelocity = new THREE.Vector3();
+        let canJump = false;
+        let isPaused = false;
+        let keys = {};
+        
+        // Raycaster para interacción
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0);
+        
+        // ==================== INICIALIZACIÓN ====================
+        function init() {
+            // Escena
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x88ccff, 50, 200);
+            scene.background = new THREE.Color(0x88ccff);
+            
+            // Cámara
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(8, 20, 8);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ 
+                canvas: document.getElementById('game'),
+                antialias: true 
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            
+            // Controles FPS (Pointer Lock)
+            controls = new THREE.PointerLockControls(camera, document.body);
+            
+            document.addEventListener('click', () => {
+                if (!isPaused) controls.lock();
+            });
+            
+            controls.addEventListener('lock', () => {
+                document.getElementById('menu').style.display = 'none';
+            });
+            
+            controls.addEventListener('unlock', () => {
+                if (!isPaused) togglePause();
+            });
+            
+            // Luces
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 100, 30);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+            
+            // Generar mundo
+            generateWorld();
+            
+            // Hotbar
+            createHotbar();
+            
+            // Eventos
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', onMouseDown);
+            document.addEventListener('mousemove', onMouseMove);
+            
+            // Animación
+            animate();
+        }
+        
+        // ==================== GENERACIÓN DE MUNDO ====================
+        function generateWorld() {
+            // Mundo plano con algo de altura
+            for (let x = -20; x < 20; x++) {
+                for (let z = -20; z < 20; z++) {
+                    const height = Math.floor(Math.random() * 4) + 5;
+                    
+                    for (let y = 0; y < height; y++) {
+                        let type = 3; // stone
+                        if (y === height - 1) type = 1; // grass
+                        else if (y >= height - 3) type = 2; // dirt
+                        
+                        addBlock(x, y, z, type);
+                    }
+                    
+                    // Árboles aleatorios
+                    if (Math.random() < 0.05 && height > 6) {
+                        const treeHeight = 5;
+                        for (let ty = 0; ty < treeHeight; ty++) {
+                            addBlock(x, height + ty, z, 4); // tronco
+                        }
+                        // Hojas
+                        for (let lx = -2; lx <= 2; lx++) {
+                            for (let lz = -2; lz <= 2; lz++) {
+                                for (let ly = 0; ly < 3; ly++) {
+                                    if (Math.abs(lx) + Math.abs(lz) < 4) {
+                                        addBlock(x + lx, height + treeHeight + ly - 1, z + lz, 5);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        function getBlockKey(x, y, z) {
+            return `\( {Math.floor(x)}, \){Math.floor(y)},${Math.floor(z)}`;
+        }
+        
+        function addBlock(x, y, z, type) {
+            const key = getBlockKey(x, y, z);
+            if (world[key]) return;
+            
+            const blockData = BLOCK_TYPES[type];
+            
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshLambertMaterial({ 
+                color: blockData.color,
+                transparent: blockData.transparent || false,
+                opacity: blockData.opacity || 1
+            });
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData = { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), type: type };
+            
+            scene.add(mesh);
+            world[key] = mesh;
+        }
+        
+        function removeBlock(x, y, z) {
+            const key = getBlockKey(x, y, z);
+            const block = world[key];
+            if (block) {
+                scene.remove(block);
+                delete world[key];
+            }
+        }
+        
+        // ==================== HOTBAR ====================
+        function createHotbar() {
+            const hotbar = document.getElementById('hotbar');
+            hotbar.innerHTML = '';
+            
+            Object.keys(BLOCK_TYPES).forEach((type, index) => {
+                const slot = document.createElement('div');
+                slot.className = `slot ${parseInt(type) === currentBlockType ? 'selected' : ''}`;
+                slot.innerHTML = BLOCK_TYPES[type].emoji;
+                slot.title = BLOCK_TYPES[type].name;
+                slot.onclick = () => {
+                    currentBlockType = parseInt(type);
+                    updateHotbar();
+                };
+                hotbar.appendChild(slot);
+            });
+        }
+        
+        function updateHotbar() {
+            const slots = document.querySelectorAll('.slot');
+            slots.forEach((slot, i) => {
+                const type = i + 1;
+                slot.classList.toggle('selected', type === currentBlockType);
+            });
+        }
+        
+        // ==================== INTERACCIÓN ====================
+        function onMouseDown(e) {
+            if (!controls.isLocked || isPaused) return;
+            
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(Object.values(world));
+            
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                const block = intersect.object;
+                
+                if (e.button === 0) { // Click izquierdo - romper
+                    removeBlock(block.userData.x, block.userData.y, block.userData.z);
+                } 
+                else if (e.button === 2) { // Click derecho - colocar
+                    const pos = intersect.point.clone().add(intersect.face.normal.multiplyScalar(0.5));
+                    addBlock(
+                        Math.floor(pos.x), 
+                        Math.floor(pos.y), 
+                        Math.floor(pos.z), 
+                        currentBlockType
+                    );
+                }
+            }
+        }
+        
+        function onMouseMove(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+        }
+        
+        // ==================== CONTROLES ====================
+        function onKeyDown(e) {
+            keys[e.code] = true;
+            
+            if (e.code === 'Escape') {
+                togglePause();
+            }
+            
+            if (e.key >= '1' && e.key <= '7') {
+                currentBlockType = parseInt(e.key);
+                updateHotbar();
+            }
+        }
+        
+        function onKeyUp(e) {
+            keys[e.code] = false;
+        }
+        
+        function togglePause() {
+            isPaused = !isPaused;
+            const menu = document.getElementById('menu');
+            if (isPaused) {
+                controls.unlock();
+                menu.style.display = 'flex';
+            } else {
+                menu.style.display = 'none';
+                controls.lock();
+            }
+        }
+        
+        // ==================== FÍSICA Y MOVIMIENTO ====================
+        function updatePlayer(delta) {
+            if (!controls.isLocked) return;
+            
+            const speed = 12 * delta;
+            const direction = new THREE.Vector3();
+            
+            camera.getWorldDirection(direction);
+            const right = new THREE.Vector3().crossVectors(direction, camera.up).normalize();
+            
+            if (keys['KeyW']) {
+                controls.moveForward(speed);
+            }
+            if (keys['KeyS']) {
+                controls.moveForward(-speed);
+            }
+            if (keys['KeyA']) {
+                controls.moveRight(-speed);
+            }
+            if (keys['KeyD']) {
+                controls.moveRight(speed);
+            }
+            
+            // Gravedad y colisiones simples
+            playerVelocity.y -= 25 * delta; // gravedad
+            
+            camera.position.y += playerVelocity.y * delta;
+            
+            // Colisión simple con suelo
+            if (camera.position.y < 10) {
+                camera.position.y = 10;
+                playerVelocity.y = 0;
+                canJump = true;
+            }
+            
+            if (keys['Space'] && canJump) {
+                playerVelocity.y = 12;
+                canJump = false;
+            }
+        }
+        
+        // ==================== LOOP PRINCIPAL ====================
+        let lastTime = 0;
+        
+        function animate(timestamp = 0) {
+            requestAnimationFrame(animate);
+            
+            const delta = Math.min((timestamp - lastTime) / 1000, 0.1);
+            lastTime = timestamp;
+            
+            if (!isPaused) {
+                updatePlayer(delta);
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // ==================== GUARDAR / CARGAR (LocalStorage) ====================
+        function saveWorld() {
+            const saveData = {};
+            Object.keys(world).forEach(key => {
+                const block = world[key];
+                saveData[key] = block.userData.type;
+            });
+            localStorage.setItem('mineweb_save', JSON.stringify(saveData));
+            alert("¡Mundo guardado!");
+        }
+        
+        function loadWorld() {
+            const saved = localStorage.getItem('mineweb_save');
+            if (!saved) {
+                alert("No hay mundo guardado");
+                return;
+            }
+            
+            // Limpiar mundo actual
+            Object.values(world).forEach(block => scene.remove(block));
+            world = {};
+            
+            const data = JSON.parse(saved);
+            Object.keys(data).forEach(key => {
+                const [x, y, z] = key.split(',').map(Number);
+                addBlock(x, y, z, data[key]);
+            });
+            
+            alert("¡Mundo cargado!");
+        }
+        
+        // Prevenir menú contextual en click derecho
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        
+        // Iniciar juego
+        window.onload = init;
+    </script>
+</body>
+</html>
