@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Among Us Mini</title>
   <style>
-    body {
+      body {
       margin: 0;
       height: 100vh;
       display: flex;
@@ -13,6 +13,146 @@
       align-items: center;
       background: #1a1a2e;
       font-family: sans-serif;
+    }
+    canvas {
+      background: #16213e;
+      border: 3px solid #0f3460;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+  
+
+
+  
+  
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    // Jugador (Among Us)
+    const player = {
+      x: 250,
+      y: 200,
+      size: 30,
+      speed: 4
+    };
+
+    // Texto flotante
+    let floatingTexts = [];
+    // Contador
+    let counter = 0;
+
+    // Sonido "among us" (generado con Web Audio)
+    function playAmongUsSound() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        // Melodía simple: dos tonos rápidos
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(660, audioCtx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+        
+        osc.start(audioCtx.currentTime);
+        osc.stop(audioCtx.currentTime + 0.3);
+      } catch(e) {
+        // Silencioso si falla el audio
+      }
+    }
+
+    // Dibujar Among Us (versión simple)
+    function drawAmongUs(x, y, size) {
+      const s = size;
+      // Cuerpo (óvalo)
+      ctx.fillStyle = '#e94560';
+      ctx.beginPath();
+      ctx.ellipse(x, y, s * 0.6, s * 0.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Visor
+      ctx.fillStyle = '#87ceeb';
+      ctx.beginPath();
+      ctx.ellipse(x + s * 0.3, y - s * 0.15, s * 0.25, s * 0.2, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mochila
+      ctx.fillStyle = '#c73650';
+      ctx.beginPath();
+      ctx.ellipse(x - s * 0.5, y - s * 0.1, s * 0.2, s * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Piernas
+      ctx.fillStyle = '#c73650';
+      ctx.fillRect(x - s * 0.25, y + s * 0.6, s * 0.2, s * 0.3);
+      ctx.fillRect(x + s * 0.05, y + s * 0.6, s * 0.2, s * 0.3);
+
+      // Ojo (punto blanco en el visor)
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(x + s * 0.35, y - s * 0.18, s * 0.06, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Mostrar texto "among us" flotante + incrementar contador + sonido
+    function spawnText() {
+      floatingTexts.push({
+        x: player.x + (Math.random() - 0.5) * 40,
+        y: player.y - 40,
+        alpha: 1,
+        life: 60
+      });
+      counter++;
+      playAmongUsSound();
+    }
+
+    // Actualizar textos
+    function updateTexts() {
+      for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const t = floatingTexts[i];
+        t.y -= 1.2;
+        t.alpha -= 0.018;
+        t.life--;
+        if (t.life  {
+      keys[e.key] = true;
+      // Cada tecla presionada (excepto flechas) muestra el texto
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') {
+        spawnText();
+      }
+    });
+    document.addEventListener('keyup', (e) => {
+      keys[e.key] = false;
+    });
+
+    // Click también muestra el texto
+    canvas.addEventListener('click', spawnText);
+
+    // Bucle principal
+    function update() {
+      // Movimiento
+      if (keys['ArrowUp']) player.y -= player.speed;
+      if (keys['ArrowDown']) player.y += player.speed;
+      if (keys['ArrowLeft']) player.x -= player.speed;
+      if (keys['ArrowRight']) player.x += player.speed;
+
+      // Límites
+      player.x = Math.max(30, Math.min(470, player.x));
+      player.y = Math.max(40, Math.min(360, player.y));
+
+      updateTexts();
+
+      // Dibujar
+      ctx.clearRect(0, 0, 500, 400);
+      drawAmongUs(player.x, player.y, player.size);
+      drawTexts();
+      drawCounter();
+
+      requestAnimationFrame(update);
+    }
+
+    update();
     }
     canvas {
       background: #16213e;
